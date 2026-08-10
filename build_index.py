@@ -108,7 +108,7 @@ def run():
         sys.exit(f"[build] FATAL: {skipped} of {len(cur)} notes unreadable — "
                  f"aborting, index left untouched")
     if existing and changed == 0 and skipped == 0 and set(newman) == set(old_files):
-        print("[build] no content changes — index untouched (skipping 50MB republish)",
+        print("[build] no content changes — index untouched (skipping republish)",
               file=sys.stderr)
         return
 

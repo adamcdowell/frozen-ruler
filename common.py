@@ -6,7 +6,7 @@ to ./index beside these scripts (override with VSS_INDEX_DIR).
 import os, re, sys, hashlib, json
 import numpy as np
 
-CORPUS = os.environ.get("CORPUS_ROOT", os.path.join(os.getcwd(), "example", "corpus"))
+CORPUS = os.environ.get("CORPUS_ROOT", os.path.join(os.getcwd(), "example", "corpus")).rstrip(os.sep)
 # Pruned by directory NAME (segment match, not substring) so a stray substring
 # can't over-exclude and a deep folder can't slip past.
 EXCLUDE_DIRS = {".obsidian", "attachments", ".git", "Templates", ".trash"}
@@ -123,7 +123,7 @@ _FRONTMATTER = re.compile(r"\A---[ \t]*\n.*?\n(?:---|\.\.\.)[ \t]*\n", re.S)
 
 
 def _first_sentence(body, cap=None):
-    """First sentence of the note body for the P5 synthetic prefix: frontmatter
+    """First sentence of the note body for the synthetic contextual prefix: frontmatter
     stripped, fenced code masked, heading lines dropped (the title already names
     the note), list/quote markers removed. Capped at OPENING_CAP chars; empty
     string when the note has no prose."""

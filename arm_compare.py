@@ -45,6 +45,8 @@ def load(path):
 
 
 def main():
+    if len(sys.argv) < 3:
+        sys.exit(__doc__)
     bpath, cpath = sys.argv[1], sys.argv[2]
     blab = sys.argv[3] if len(sys.argv) > 3 else "baseline"
     clab = sys.argv[4] if len(sys.argv) > 4 else "candidate"

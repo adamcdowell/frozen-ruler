@@ -14,7 +14,7 @@ Run (registry install, clean tier, isolated env):
   --graph                       third lane: Personalized PageRank over the corpus's
                                 wikilink graph, seeded by the hybrid top notes, fused
                                 via weighted RRF.
-                                Underscore-segment notes (_index, _Dashboard, MOC files)
+                                Underscore-segment notes (_index, MOC files)
                                 conduct walk mass but are never returned as results.
   --graph-weight W              graph lane's RRF weight (default 1.0)
 
@@ -135,7 +135,7 @@ def _wikilink_graph(chunks):
 def graph_ppr(chunks, base_scores, seeds_n=10, damping=0.85, iters=100, tol=1e-10):
     # Note-level Personalized PageRank over the corpus wikilink graph.
     # Seeds = top hybrid notes weighted by score.
-    # Notes with any path segment starting with "_" (indexes, MOCs, _Dashboard)
+    # Notes with any path segment starting with "_" (indexes, MOCs)
     # stay CONDUCTORS: they carry walk mass, never appear in the returned ranking.
     paths, pidx, src, dst, deg = _wikilink_graph(chunks)
     n = len(paths)
@@ -217,7 +217,7 @@ def main():
     best = {}
     for idx, sc in fused.items():
         p = chunks[idx]["path"]
-        if sc > best.get(p, (-9, ""))[0]:
+        if sc > best.get(p, (-9e9, ""))[0]:
             best[p] = (sc, chunks[idx]["text"][:160])
     scores = {p: sc for p, (sc, _) in best.items()}
     if a.graph:

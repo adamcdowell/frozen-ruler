@@ -25,16 +25,18 @@ benchmark like an instrument:
 - **Index provenance is stamped into every result** (model, chunk count, build
   time). Without this, a before/after comparison silently attributes *corpus
   drift* to the change under test. This is not hypothetical: a metadata
-  writeback once re-embedded 21,978 → 22,218 chunks between two runs and moved
-  every number; the drift warning in `--compare` exists because of that day.
-- **Stale gold is reported, never silently dropped.** If a gold document
-  disappears from the index, the item is excluded *loudly* so you fix the set
-  or accept the drift consciously.
+  writeback once re-embedded the corpus between two runs and moved every
+  number; the drift warning in `--compare` exists because of that day.
+- **Fully stale gold is reported loudly.** If ALL of an item's gold documents
+  disappear from the index, the item is excluded and named in the output. An
+  item whose gold set is only *partially* present is scored against the
+  surviving subset — a documented trade-off that keeps long-lived sets usable
+  across corpus churn (see the docstring in `score.py`).
 
 ## What it measures
 
 - recall@k, F1@k (k = 1, 3, 5, 10), MRR@10 — at document level.
-- **Per-class breakout** — the set carries a `category` per item (paraphrase,
+- **Per-class breakout** — the set carries a `category` per item (derived,
   synonym, cross-page, partial-recall, negative). A macro-average happily hides
   one class sitting at zero while the rest look fine; the per-class table is
   the whole point.
@@ -54,22 +56,23 @@ benchmark like an instrument:
 paired sign test (two-sided binomial), Wilson 95% CIs, and the discordant-pair
 counts that drive the test — because at benchmark sizes like n=200, the honest
 headline is usually "indistinguishable," and the tooling should make that easy
-to say. It also prints exactly which items flipped, so a significant delta can
-be read, not just believed.
+to say. It also prints which items flipped at recall@1 (up to six per direction),
+so a significant delta can be read, not just believed.
 
 ## Results from production use
 
-Numbers below are from the private 209-item benchmark this was extracted from
-(not reproducible from the synthetic example — the example corpus is six notes
-and scores are trivially high on it):
+Numbers below are from the private benchmark this was extracted from — a
+59-item v1 frozen set, later re-cut as a 209-item v2 (189 scored positives +
+negatives) with per-class structure. Not reproducible from the synthetic
+example; the example corpus is six notes and scores are trivially high on it.
 
-- **Adopted** bge-base over bge-small on evidence: recall@5 0.449 → 0.576,
-  paired 9-improved / 0-regressed, p = 0.004.
-- **Rejected** bge-large twice: no metric reached significance (min p = 0.34)
+- **Adopted** bge-base over bge-small on evidence (v1 set, n=59): recall@5
+  0.449 → 0.576, paired 9-improved / 0-regressed, p = 0.004.
+- **Rejected** bge-large twice (v2 set): no metric reached significance (min p = 0.34)
   and the synonym class *regressed* (recall@1 0.400 → 0.360). Documented so the
   question doesn't get re-litigated without a new model family.
-- **Killed my own shipped feature**: a graph-retrieval lane I had already
-  shipped scored 0-better / 9-worse at recall@10, p = 0.004, on the frozen set.
+- **Killed my own shipped feature** (v2 set): a graph-retrieval lane I had
+  already shipped scored 0-better / 9-worse at recall@10, p = 0.004.
   Demoted it; kept the original favorable numbers under a HISTORICAL heading
   instead of deleting them.
 
@@ -125,8 +128,9 @@ One JSON object per line:
 ```
 
 `gold_paths` are corpus-relative. Negative items have empty `gold_paths`;
-success for a negative is returning nothing relevant (or only paths listed in
-`acceptable_paths`).
+retrieval always returns k candidates, so a negative is judged by whether what
+ranks on top is in `acceptable_paths`, and true abstention is a downstream
+call built on the reported cosine separation.
 
 ## Design decisions worth stealing
 
@@ -138,12 +142,18 @@ success for a negative is returning nothing relevant (or only paths listed in
   "publish an empty index with exit 0" a real failure mode).
 - **Carry-forward on read failure** — a transiently unreadable file keeps its
   old vectors rather than silently vanishing from the index; mass read
-  failures abort the build entirely.
+  failures with no prior vectors to carry forward abort the build entirely.
 - **Query-only instruction prefix** — the bge retrieval instruction is
   prepended to queries, never to passages.
 - **Contextual chunk prefixes** — each indexed chunk carries a synthetic
-  prefix (document title + opening sentence + heading path) while the display
-  text stays raw.
+  prefix (document title + opening sentence + heading path) on the *indexed*
+  form; the stored display form keeps only the title/heading context.
+
+## Tests
+
+`uv run python3 test_stats.py` — exact checks on the hand-rolled statistics
+(sign-test binomial p-values against closed-form values, Wilson interval
+against reference constants, and the empty/degenerate guards).
 
 ## What this is not
 

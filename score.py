@@ -81,6 +81,9 @@ def main():
     except FileNotFoundError:
         print(f"[warn] no manifest beside {os.path.basename(bset)} — integrity unverified",
               file=sys.stderr)
+    except (json.JSONDecodeError, OSError) as e:
+        sys.exit(f"FATAL: manifest {os.path.basename(bman)} unreadable ({e}) — refusing to score "
+                 f"an unverifiable set. Fix or re-freeze the manifest.")
 
     man, chunks, emb = C.load_index()
     index_paths = {c["path"] for c in chunks}
