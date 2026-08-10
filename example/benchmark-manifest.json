@@ -1,0 +1,14 @@
+{
+ "created": "2026-08-10",
+ "items": 11,
+ "by_class": {
+  "derived": 3,
+  "synonym": 2,
+  "cross-page": 2,
+  "partial-recall": 2,
+  "negative": 2
+ },
+ "sha256": "e5181f5c3dfc665269a448ae454488d26f1bf285008eac665ace5c965e240e44",
+ "frozen": true,
+ "fence": "FROZEN \u2014 never edit this set. Regenerate as a NEW version so prior numbers stay comparable."
+}

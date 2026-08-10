@@ -1,0 +1,11 @@
+{"id": "deri001", "category": "derived", "source": "example", "query": "why does my shot run fast even though the grind is fine", "gold_paths": ["channeling.md"]}
+{"id": "deri002", "category": "derived", "source": "example", "query": "how many seconds should a double take from first drip", "gold_paths": ["dialing in espresso.md"]}
+{"id": "deri003", "category": "derived", "source": "example", "query": "my milk tastes burnt and flat after steaming, what happened", "gold_paths": ["milk steaming basics.md"]}
+{"id": "syn001", "category": "synonym", "source": "example", "query": "frothing technique for silky foam", "gold_paths": ["milk steaming basics.md"]}
+{"id": "syn002", "category": "synonym", "source": "example", "query": "needle stirring tool for breaking up clumps before tamping", "gold_paths": ["channeling.md"]}
+{"id": "xp001", "category": "cross-page", "source": "example", "query": "how does grind consistency connect to shot to shot repeatability", "gold_paths": ["grinder burr types.md", "dialing in espresso.md"]}
+{"id": "xp002", "category": "cross-page", "source": "example", "query": "what protects the boiler from scale and what upkeep goes with it", "gold_paths": ["water chemistry for espresso.md", "cleaning and maintenance log.md"]}
+{"id": "part001", "category": "partial-recall", "source": "example", "query": "target temperature for latte milk", "gold_paths": ["milk steaming basics.md"]}
+{"id": "part002", "category": "partial-recall", "source": "example", "query": "what does alkalinity actually do", "gold_paths": ["water chemistry for espresso.md"]}
+{"id": "neg001", "category": "negative", "source": "example", "query": "how do I roast green coffee beans in a popcorn popper", "gold_paths": [], "acceptable_paths": []}
+{"id": "neg002", "category": "negative", "source": "example", "query": "cold brew concentrate recipe for a big batch", "gold_paths": [], "acceptable_paths": []}
