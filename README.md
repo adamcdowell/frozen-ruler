@@ -7,7 +7,7 @@
 ![benchmark](https://img.shields.io/badge/benchmark-sha256--frozen-2ea44f?style=flat-square)
 [![License](https://img.shields.io/github/license/adamcdowell/frozen-ruler?style=flat-square)](./LICENSE)
 
-**A benchmark is only a ruler if it cannot move.**
+**Retrieval eval harness with frozen-benchmark discipline — a benchmark is only a ruler if it cannot move**
 
 A retrieval evaluation harness for markdown knowledge bases — hybrid search
 (dense embeddings + BM25 via reciprocal rank fusion, optional cross-encoder

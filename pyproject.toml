@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "frozen-ruler"
 version = "0.1.0"                          # PEP 440. ADAPT: no release cut yet — pairs with CHANGELOG.md [Unreleased]
-description = "Retrieval evaluation harness with frozen-benchmark discipline: sha256-pinned sets, drift refusal, per-class scoring, paired sign test, Wilson CIs"
+description = "Retrieval eval harness with frozen-benchmark discipline — a benchmark is only a ruler if it cannot move"
 readme = "README.md"
 # 3.11, not 3.10: the pinned numpy==2.4.6 requires >=3.11, so a 3.10 claim is unsatisfiable.
 # Caught by uv's resolver when this file was added (the README had said 3.10+ since publication).
