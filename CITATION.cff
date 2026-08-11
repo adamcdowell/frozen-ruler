@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: frozen-ruler
+message: >-
+  If you use frozen-ruler, or the frozen-benchmark discipline it implements, please
+  cite it using the metadata in this file.
+type: software
+authors:
+  - given-names: Adam
+    family-names: McDowell
+repository-code: 'https://github.com/adamcdowell/frozen-ruler'
+license: MIT
+abstract: >-
+  A retrieval evaluation harness for markdown knowledge bases — hybrid search
+  (dense embeddings and BM25 fused by reciprocal rank fusion, with an optional
+  cross-encoder rerank and a PageRank graph lane) where the evaluation discipline
+  is the product: sha256-frozen benchmark sets, drift refusal, per-class scoring,
+  and honest statistics for small n.
+keywords:
+  - retrieval evaluation
+  - information retrieval
+  - benchmark
+  - reciprocal rank fusion
+  - BM25

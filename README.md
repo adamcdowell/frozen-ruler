@@ -1,3 +1,5 @@
+<div align=right>Table of Contents ↗️</div>
+
 # frozen-ruler
 
 [![ci](https://github.com/adamcdowell/frozen-ruler/actions/workflows/ci.yml/badge.svg)](https://github.com/adamcdowell/frozen-ruler/actions/workflows/ci.yml)
@@ -241,4 +243,4 @@ your improvement is actually noise.
 
 ## License
 
-MIT
+MIT © Adam McDowell — see [LICENSE](./LICENSE).
