@@ -1,5 +1,6 @@
 # frozen-ruler
 
+[![ci](https://github.com/adamcdowell/frozen-ruler/actions/workflows/ci.yml/badge.svg)](https://github.com/adamcdowell/frozen-ruler/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3670A0?style=flat-square&logo=python&logoColor=ffdd54)
 ![benchmark](https://img.shields.io/badge/benchmark-sha256--frozen-2ea44f?style=flat-square)
 [![License](https://img.shields.io/github/license/adamcdowell/frozen-ruler?style=flat-square)](./LICENSE)
@@ -225,10 +226,11 @@ call built on the reported cosine separation.
 (sign-test binomial p-values against closed-form values, Wilson interval
 against reference constants, and the empty/degenerate guards).
 
-They need no install: `test_stats.py` and `arm_compare.py` import only the
-standard library, so the statistics are verifiable without touching the ~2 GB of
-torch that the indexing side needs. `sentence-transformers` and `numpy` are
-dependencies of `build_index.py` / `score.py`, not of the maths.
+These run in CI on every push across Python 3.11–3.14 on Linux, macOS and
+Windows. The lane installs nothing: `test_stats.py` and `arm_compare.py` import
+only the standard library, so the statistics are verifiable without touching the
+~2 GB of torch that the indexing side needs. `sentence-transformers` and `numpy`
+are dependencies of `build_index.py` / `score.py`, not of the maths.
 
 ## What this is not
 

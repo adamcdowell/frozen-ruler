@@ -10,6 +10,7 @@ Version numbers, when cut, will follow PEP 440 (matching `pyproject.toml`).
 
 ### Added
 
+- Continuous integration (`.github/workflows/ci.yml`): the statistics tests (`test_stats.py`) now run on every push across Python 3.11–3.14 on Linux, macOS and Windows. The lane installs nothing — the statistics are stdlib-only, so they are verifiable without the ~2 GB of torch the indexing side pulls.
 - Packaging metadata (`pyproject.toml`) with the dependencies pinned, so every quickstart command drops its `--isolated --with "sentence-transformers==..." --with "numpy==..."` prefix. `pip install -e .` works as the non-uv path. `uv.lock` is committed too — a harness whose argument is that the ruler must not move should pin its own transitive tree.
 - An "Example output" section in the README showing real `score.py` and `arm_compare.py` output from the example corpus, including a worked case where recall@1 falls 0.22 and the sign test still returns p=0.5000.
 - A Mermaid pipeline diagram of corpus → index → frozen set → score → compare.
