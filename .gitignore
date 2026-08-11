@@ -1,4 +1,6 @@
 __pycache__/
+.venv/
+*.egg-info/
 index/
 example/index/
 results*.json

@@ -1,0 +1,52 @@
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "frozen-ruler"
+version = "0.1.0"                          # PEP 440. ADAPT: no release cut yet — pairs with CHANGELOG.md [Unreleased]
+description = "Retrieval evaluation harness with frozen-benchmark discipline: sha256-pinned sets, drift refusal, per-class scoring, paired sign test, Wilson CIs"
+readme = "README.md"
+# 3.11, not 3.10: the pinned numpy==2.4.6 requires >=3.11, so a 3.10 claim is unsatisfiable.
+# Caught by uv's resolver when this file was added (the README had said 3.10+ since publication).
+# The stdlib-only statistics lane (test_stats.py / arm_compare.py) does still run on 3.10.
+requires-python = ">=3.11"
+license = { file = "LICENSE" }             # sampleproject 4.0.0 form; ADAPT: verify — newest setuptools also accepts  license = "MIT"
+keywords = ["retrieval", "evaluation", "benchmark", "rag"]
+authors = [{ name = "Adam McDowell" }]     # DELIBERATELY no email key — package metadata republishes it (8/2026 incident)
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+# Runtime deps of the indexing/scoring scripts, pinned exactly as the README quickstart pins them.
+# arm_compare.py / freeze.py / test_stats.py need none of this (stdlib-only).
+dependencies = [
+  "sentence-transformers==5.6.0",
+  "numpy==2.4.6",
+]
+
+# No [project.optional-dependencies]: the test lane is `python test_stats.py` — flat asserts,
+# stdlib-only, not a pytest suite. A dev = ["pytest"] extra would be decorative and misleading.
+
+[project.urls]
+"Source" = "https://github.com/adamcdowell/frozen-ruler"
+"Bug Reports" = "https://github.com/adamcdowell/frozen-ruler/issues"
+
+[project.scripts]                          # OPTIONAL — see stance note above. Flat-module form per
+                                           # sampleproject's verbatim `sample = "sample:main"`.
+frozen-build-index = "build_index:main"    # command names ADAPT: naming is proposal-author's, targets verified
+frozen-score = "score:main"
+frozen-compare = "arm_compare:main"
+frozen-freeze = "freeze:main"
+frozen-search = "search:main"
+
+[tool.setuptools]
+# ADAPT: verify — flat layout (no package dir) needs explicit py-modules or setuptools
+# auto-discovery errors on multiple top-level modules. test_stats deliberately excluded.
+# sampleproject's package-data key does not apply here: py-modules ship no data dirs;
+# example/ fixtures stay repo-only, and benchmark sets are user-supplied paths anyway.
+py-modules = ["build_index", "score", "arm_compare", "freeze", "search", "common"]

@@ -1,5 +1,9 @@
 # frozen-ruler
 
+![Python](https://img.shields.io/badge/python-3.11%2B-3670A0?style=flat-square&logo=python&logoColor=ffdd54)
+![benchmark](https://img.shields.io/badge/benchmark-sha256--frozen-2ea44f?style=flat-square)
+[![License](https://img.shields.io/github/license/adamcdowell/frozen-ruler?style=flat-square)](./LICENSE)
+
 **A benchmark is only a ruler if it cannot move.**
 
 A retrieval evaluation harness for markdown knowledge bases — hybrid search
@@ -11,6 +15,23 @@ statistics for small n.
 Extracted from a production system I run daily over my own business's knowledge
 base. The example corpus here is synthetic (a tiny espresso wiki); the design
 decisions all come from real incidents, several of which are documented below.
+
+## Pipeline
+
+```mermaid
+flowchart LR
+  C[markdown corpus] -->|CORPUS_ROOT| BI[build_index.py]
+  BI -->|chunk + embed| IX[(index / VSS_INDEX_DIR)]
+  B[benchmark.jsonl] --> FZ[freeze.py]
+  FZ -->|sha256 manifest| FS[frozen set]
+  IX --> SC[score.py]
+  FS -->|pin check — mismatch = fatal exit| SC
+  SC --> R1[baseline.json]
+  SC --> R2[candidate.json]
+  R1 --> AC[arm_compare.py — paired sign test, Wilson CIs]
+  R2 --> AC
+  IX -.-> SR[search.py — interactive]
+```
 
 ## Why "frozen"
 
@@ -81,42 +102,91 @@ including when the numbers say your own idea was wrong.
 
 ## Quickstart
 
-Requires Python 3.10+; dependencies are pulled per-run with
-[uv](https://github.com/astral-sh/uv) (no environment to manage):
+Requires Python 3.11+ (the pinned `numpy` floor). Dependencies are declared in
+`pyproject.toml`, so with [uv](https://github.com/astral-sh/uv) there is no
+environment to manage — or run `pip install -e .` once and drop the `uv run` prefix.
 
 ```bash
 # 1. Build an index over the example corpus
-CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index \
-  uv run --isolated --with "sentence-transformers==5.6.0" --with "numpy==2.4.6" \
-  python3 build_index.py
+CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index uv run python3 build_index.py
 
 # 2. Score the frozen example benchmark
-CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index \
-  uv run --isolated --with "sentence-transformers==5.6.0" --with "numpy==2.4.6" \
-  python3 score.py --set example/benchmark.jsonl --out baseline.json
+CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index uv run python3 score.py --set example/benchmark.jsonl --out baseline.json
 
-# 3. Change something (e.g. VSS_MODEL=BAAI/bge-small-en-v1.5), rescore to a
-#    second file, then compare the two arms
-CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index2 \
-  VSS_MODEL=BAAI/bge-small-en-v1.5 \
-  uv run --isolated --with "sentence-transformers==5.6.0" --with "numpy==2.4.6" \
-  python3 build_index.py
-CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index2 \
-  VSS_MODEL=BAAI/bge-small-en-v1.5 \
-  uv run --isolated --with "sentence-transformers==5.6.0" --with "numpy==2.4.6" \
-  python3 score.py --set example/benchmark.jsonl --out candidate.json
+# 3. Change something (here: the embedding model), rescore, compare the two arms
+CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index2 VSS_MODEL=BAAI/bge-small-en-v1.5 uv run python3 build_index.py
+CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index2 VSS_MODEL=BAAI/bge-small-en-v1.5 uv run python3 score.py --set example/benchmark.jsonl --out candidate.json
 uv run python3 arm_compare.py baseline.json candidate.json base cand
 
 # 4. Author your own set, then freeze it
 uv run python3 freeze.py path/to/benchmark.jsonl
 
 # Interactive search over the index
-CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index \
-  uv run --isolated --with "sentence-transformers==5.6.0" --with "numpy==2.4.6" \
-  python3 search.py "why do my shots run fast" --k 5
+CORPUS_ROOT=$PWD/example/corpus VSS_INDEX_DIR=$PWD/example/index uv run python3 search.py "why do my shots run fast" --k 5
 ```
 
 Point `CORPUS_ROOT` at any directory of markdown files to use your own corpus.
+
+## Example output
+
+Real output from the synthetic six-note example corpus — a **smoke test, not a
+result**. Scores are trivially high on six notes; the production numbers are in
+"Results from production use" above. What this shows is the *shape* of the
+instrument, and step 3 is a worked example of it refusing to overclaim.
+
+Scoring the frozen set (`score.py`, tail of the run):
+
+```
+[frozen-set OK] benchmark.jsonl sha256 e5181f5c3dfc… verified
+
+PER-CLASS (the v2 payload — a macro-average hides a class at zero):
+  cross-page      n=  2  r@1 0.500  r@5 1.000  r@10 1.000  MRR 1.000  misses 0
+  derived         n=  3  r@1 1.000  r@5 1.000  r@10 1.000  MRR 1.000  misses 0
+  partial-recall  n=  2  r@1 1.000  r@5 1.000  r@10 1.000  MRR 1.000  misses 0
+  synonym         n=  2  r@1 1.000  r@5 1.000  r@10 1.000  MRR 1.000  misses 0
+
+NEGATIVES n=2: top1-acceptable 0.00 · any5-acceptable 0.00
+  cosine separation AUC 0.9444 (pos median 0.5954 vs neg median 0.5802; pos p10 0.5538 vs neg p90 0.5802)
+
+mega-note contamination in top-5: 0.756 (share of non-gold top-5 slots taken by the 8 biggest notes)
+```
+
+Comparing two arms — bge-base baseline vs a bge-small candidate (`arm_compare.py`):
+
+```
+paired items: 9   base vs cand
+
+HEADLINE (all scored items)
+  metric               base           cand   delta     sign test
+  recall@1           0.8889         0.6667  -0.2222     0up/  2dn p=0.5000
+  recall@3           1.0000         1.0000  +0.0000     0up/  0dn p=1.0000
+  mrr@10             1.0000         0.8889  -0.1111     0up/  2dn p=0.5000
+
+ANY-HIT RATE @10 (Wilson 95% CI)
+  base          : 9/9 = 1.000   CI [0.701, 1.000]
+  cand          : 9/9 = 1.000   CI [0.701, 1.000]
+
+FLIPS at recall@1 (who actually moved)
+  cand wins top-1 on 0, loses on 2
+    - [derived] why does my shot run fast even though the grind is fine
+    - [synonym] frothing technique for silky foam
+```
+
+**This is the point of the harness.** The smaller model looks clearly worse —
+recall@1 drops 0.22 — and the sign test still returns **p=0.5000**, because two
+losses out of nine paired items is not evidence at this sample size. A harness
+that reported only the delta would have told you to ship a conclusion the data
+does not support. The Wilson interval says the same thing from the other side:
+9/9 gives `[0.701, 1.000]`, so "100% recall" on nine items is compatible with a
+true rate near 70%. The FLIPS list is what you actually act on — two named
+queries to go look at, not a number to argue about.
+
+Statistics self-test (stdlib only, no install — this is what CI runs):
+
+```
+$ uv run python3 test_stats.py
+test_stats: all assertions passed
+```
 
 ## Benchmark set format
 
@@ -154,6 +224,11 @@ call built on the reported cosine separation.
 `uv run python3 test_stats.py` — exact checks on the hand-rolled statistics
 (sign-test binomial p-values against closed-form values, Wilson interval
 against reference constants, and the empty/degenerate guards).
+
+They need no install: `test_stats.py` and `arm_compare.py` import only the
+standard library, so the statistics are verifiable without touching the ~2 GB of
+torch that the indexing side needs. `sentence-transformers` and `numpy` are
+dependencies of `build_index.py` / `score.py`, not of the maths.
 
 ## What this is not
 
