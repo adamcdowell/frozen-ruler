@@ -8,12 +8,13 @@ Safe for the unattended weekly loop:
   - exclusive non-blocking lock (overlapping runs skip, exit 3)
   - refuses to run if the corpus is missing or its note count collapsed >50%
     (so cloud-storage eviction / unmount can't wipe a good index)
-  - atomic publish (temp files + os.replace, manifest written LAST as the commit
-    marker) so a mid-write kill can never leave a torn index
+  - atomic publish: generation-stamped data files + ONE os.replace of the
+    manifest that names them, so a mid-write kill leaves the previous snapshot
+    intact rather than a mixed one
   - incremental: unchanged notes reuse vectors; changed re-embed; deleted drop;
     a transient read error CARRIES THE NOTE FORWARD rather than dropping it
 """
-import os, sys, json, time, fcntl, numpy as np
+import os, sys, json, time, fcntl, uuid, numpy as np
 import common as C
 from sentence_transformers import SentenceTransformer
 
@@ -41,20 +42,57 @@ def load_existing():
     return (man, chunks, emb), hint
 
 
+def _fsync_dir(d):
+    """Durably commit the directory entry itself: file fsync alone does not
+    guarantee a rename survives a power loss, or that renames land in order."""
+    fd = os.open(d, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_publish(emb, meta, manifest):
+    """ONE rename publishes the whole snapshot.
+
+    Data files are written under fresh generation-stamped names, so they never
+    overwrite the live pair; manifest.json is then os.replace()d to NAME them.
+    A crash anywhere before that single rename leaves the previous manifest
+    pointing at its own still-intact files. Three sequential replaces did NOT
+    give this: a same-count publish killed between the embeddings and chunks
+    renames passed every load check while new vectors sat against stale
+    metadata (and the incremental builder moves changed files to the tail, so
+    the rows are wholesale reordered, not locally wrong).
+    """
     d = C.INDEX_DIR
-    tmp = {"emb": ".embeddings.npy.tmp", "ch": ".chunks.json.tmp", "man": ".manifest.json.tmp"}
-    with open(os.path.join(d, tmp["emb"]), "wb") as f:
+    gen = uuid.uuid4().hex[:12]
+    emb_name, ch_name = f"embeddings-{gen}.npy", f"chunks-{gen}.json"
+    with open(os.path.join(d, emb_name), "wb") as f:
         np.save(f, emb); f.flush(); os.fsync(f.fileno())
-    with open(os.path.join(d, tmp["ch"]), "w", encoding="utf-8") as f:
+    with open(os.path.join(d, ch_name), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False); f.flush(); os.fsync(f.fileno())
-    with open(os.path.join(d, tmp["man"]), "w", encoding="utf-8") as f:
+    try:
+        prev = json.load(open(os.path.join(d, "manifest.json"), encoding="utf-8"))
+    except Exception:
+        prev = None
+    manifest = {**manifest, "emb": emb_name, "chunks": ch_name, "gen": gen}
+    tmp = os.path.join(d, ".manifest.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False); f.flush(); os.fsync(f.fileno())
-    # data first, manifest LAST = commit marker. A kill between replaces leaves a
-    # count mismatch that load_index() detects, never silent wrong results.
-    os.replace(os.path.join(d, tmp["emb"]), os.path.join(d, "embeddings.npy"))
-    os.replace(os.path.join(d, tmp["ch"]), os.path.join(d, "chunks.json"))
-    os.replace(os.path.join(d, tmp["man"]), os.path.join(d, "manifest.json"))
+    _fsync_dir(d)                                  # data + tmp durable BEFORE the commit
+    os.replace(tmp, os.path.join(d, "manifest.json"))   # <-- the commit, one rename
+    _fsync_dir(d)                                  # the commit itself durable
+    # Retain the generation we just superseded so a reader already holding the
+    # old manifest can still open its files; reclaim everything older.
+    keep = {emb_name, ch_name}
+    if prev:
+        keep |= {prev.get("emb"), prev.get("chunks")}
+    for fn in os.listdir(d):
+        if (fn.startswith("embeddings-") or fn.startswith("chunks-")) and fn not in keep:
+            try:
+                os.remove(os.path.join(d, fn))
+            except OSError:
+                pass
 
 
 def run():

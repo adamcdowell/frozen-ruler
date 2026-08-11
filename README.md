@@ -56,6 +56,11 @@ benchmark like an instrument:
   item whose gold set is only *partially* present is scored against the
   surviving subset — a documented trade-off that keeps long-lived sets usable
   across corpus churn (see the docstring in `score.py`).
+- **A degraded lane is fatal, not a footnote.** If `--rerank` is requested and
+  the cross-encoder fails, the scorer refuses to write results rather than
+  emit RRF baseline numbers stamped `rerank: true`. Successful runs record
+  `rerank_verified`. Interactive `search.py` still degrades gracefully — a
+  missing model shouldn't stop you searching, only publishing a measurement.
 
 ## What it measures
 
@@ -67,9 +72,15 @@ benchmark like an instrument:
 - **Negatives and abstention** — negative items (no correct answer in the
   corpus) are scored by a different rule, and the scorer reports the cosine
   separation AUC between positives and negatives: the probability that a random
-  positive query's top hit outscores a random negative's. That number tells you
-  whether "return nothing rather than a bad answer" is even learnable from your
-  retrieval scores.
+  positive query's *best dense-cosine score* exceeds a random negative's. Note
+  what this is and is not: it is a property of the **dense lane only**, measured
+  before fusion, so it does not move when `--rerank` or `--graph` are on, and it
+  is not the score of the note the pipeline finally ranks first. That is
+  deliberate — RRF fused scores are rank-derived (~1/61 for every #1) and carry
+  no relevance magnitude, so the fused ranking cannot supply this number at all.
+  It tells you whether "return nothing rather than a bad answer" is even
+  learnable from your retrieval scores. It is a measurement, not a gate: no
+  threshold is applied anywhere in this harness.
 - **Mega-document contamination** — the share of top-5 slots taken by the N
   largest documents when they aren't gold. Big append-style documents crowd out
   everything else; this makes the crowding visible.
@@ -81,7 +92,28 @@ paired sign test (two-sided binomial), Wilson 95% CIs, and the discordant-pair
 counts that drive the test — because at benchmark sizes like n=200, the honest
 headline is usually "indistinguishable," and the tooling should make that easy
 to say. It also prints which items flipped at recall@1 (up to six per direction),
-so a significant delta can be read, not just believed.
+so a flagged result can be read, not just believed.
+
+Read the marker precisely: the sign test counts how many queries improved
+versus regressed and discards the size of each move, so it tests *direction*,
+not the mean delta printed beside it. Those two can disagree when a handful of
+large moves dominate the mean — twenty queries each gaining one MRR rank while
+one loses its top hit is a significant directional win and a negative mean.
+`arm_compare.py` labels the marker as directional and flags that disagreement
+explicitly rather than letting it be read as a claim about the average. Every
+result below reports its discordant-pair counts for the same reason.
+
+**Multiplicity.** A single run emits 5 headline tests plus 3 per query class —
+20 on the v2 set. Labelling all of them "significant" at raw p<0.05 would be a
+multiple-comparisons error, so one metric is declared primary *before the run*
+(`FROZEN_PRIMARY_METRIC`, default `recall@5`) and is the only confirmatory test;
+every other row is marked exploratory and carries a Holm-Bonferroni adjusted
+p-value over the whole family that run emitted. Two things keep this from being
+theatre: the recall@k tests are nested on the same paired items rather than
+independent, so Holm over the full family is deliberately conservative, and the
+two-sided sign test is discrete — it cannot reach p<0.05 until there are 6
+discordant pairs (min p = 2/2^n), so small per-class cells are structurally
+incapable of firing at all.
 
 ## Results from production use
 
@@ -91,14 +123,20 @@ negatives) with per-class structure. Not reproducible from the synthetic
 example; the example corpus is six notes and scores are trivially high on it.
 
 - **Adopted** bge-base over bge-small on evidence (v1 set, n=59): recall@5
-  0.449 → 0.576, paired 9-improved / 0-regressed, p = 0.004.
-- **Rejected** bge-large twice (v2 set): no metric reached significance (min p = 0.34)
+  0.449 → 0.576, paired 9-improved / 0-regressed, p = 0.004. The weakest of the
+  three calls, and I'll say so: it rests on one metric of five, recall@1 moved
+  *against* it, and MRR was flat. It justified a change I wanted to make, which
+  is exactly when a single significant metric deserves the least trust.
+- **Rejected** bge-large twice (v2 set): no metric's paired sign test reached significance (min p = 0.34)
   and the synonym class *regressed* (recall@1 0.400 → 0.360). Documented so the
   question doesn't get re-litigated without a new model family.
-- **Killed my own shipped feature** (v2 set): a graph-retrieval lane I had
-  already shipped scored 0-better / 9-worse at recall@10, p = 0.004.
-  Demoted it; kept the original favorable numbers under a HISTORICAL heading
-  instead of deleting them.
+- **Overturned my own feature** (v2 set): a graph-retrieval lane I had built,
+  benchmarked favorably on the 59-item set, and blessed as an opt-in in my live
+  search tool scored 0-better / 9-worse at recall@10 across 189 paired queries,
+  p = 0.004 — with no metric improving anywhere in the run. Demoted it to
+  not-recommended and kept the original favorable numbers under a HISTORICAL
+  heading instead of deleting them. Elapsed time from blessing it to overturning
+  it: one afternoon.
 
 The harness exists so that decisions like these are forced by the numbers,
 including when the numbers say your own idea was wrong.
@@ -149,7 +187,7 @@ PER-CLASS (the v2 payload — a macro-average hides a class at zero):
   synonym         n=  2  r@1 1.000  r@5 1.000  r@10 1.000  MRR 1.000  misses 0
 
 NEGATIVES n=2: top1-acceptable 0.00 · any5-acceptable 0.00
-  cosine separation AUC 0.9444 (pos median 0.5954 vs neg median 0.5802; pos p10 0.5538 vs neg p90 0.5802)
+  cosine separation AUC 0.9444 (pos median 0.5954 vs neg median 0.5426; pos p10 0.5816 vs neg p90 0.5727)
 
 mega-note contamination in top-5: 0.756 (share of non-gold top-5 slots taken by the 8 biggest notes)
 ```
@@ -159,15 +197,41 @@ Comparing two arms — bge-base baseline vs a bge-small candidate (`arm_compare.
 ```
 paired items: 9   base vs cand
 
+FAMILY: 17 tests this run (5 headline + 3x4 per class). Primary metric: recall@5. Uncorrected p is reported for every row; only the primary is confirmatory, the rest are exploratory at Holm-adjusted p.
+
 HEADLINE (all scored items)
-  metric               base           cand   delta     sign test
-  recall@1           0.8889         0.6667  -0.2222     0up/  2dn p=0.5000
-  recall@3           1.0000         1.0000  +0.0000     0up/  0dn p=1.0000
-  mrr@10             1.0000         0.8889  -0.1111     0up/  2dn p=0.5000
+  metric               base           cand  mean delta   sign test (direction only)
+  recall@1           0.8889         0.6667  -0.2222     0up/  2dn p=0.5000 p_holm=1.0000
+  recall@3           1.0000         1.0000  +0.0000     0up/  0dn p=1.0000 p_holm=1.0000
+  recall@5           1.0000         1.0000  +0.0000     0up/  0dn p=1.0000 p_holm=1.0000
+  recall@10          1.0000         1.0000  +0.0000     0up/  0dn p=1.0000 p_holm=1.0000
+  mrr@10             1.0000         0.8889  -0.1111     0up/  2dn p=0.5000 p_holm=1.0000
 
 ANY-HIT RATE @10 (Wilson 95% CI)
   base          : 9/9 = 1.000   CI [0.701, 1.000]
   cand          : 9/9 = 1.000   CI [0.701, 1.000]
+
+PER CLASS (exploratory — hypothesis-generating, not confirmatory)
+
+  [cross-page] n=2
+    recall@1   0.5000 -> 0.5000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+    recall@5   1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+    recall@10  1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+
+  [derived] n=3
+    recall@1   1.0000 -> 0.6667  (-0.3333)   0up/ 1dn p=1.000 p_holm=1.000
+    recall@5   1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+    recall@10  1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+
+  [partial-recall] n=2
+    recall@1   1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+    recall@5   1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+    recall@10  1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+
+  [synonym] n=2
+    recall@1   1.0000 -> 0.5000  (-0.5000)   0up/ 1dn p=1.000 p_holm=1.000
+    recall@5   1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
+    recall@10  1.0000 -> 1.0000  (+0.0000)   0up/ 0dn p=1.000 p_holm=1.000
 
 FLIPS at recall@1 (who actually moved)
   cand wins top-1 on 0, loses on 2
@@ -200,16 +264,23 @@ One JSON object per line:
 {"id": "neg001", "category": "negative", "query": "how do I roast green beans", "gold_paths": [], "acceptable_paths": []}
 ```
 
-`gold_paths` are corpus-relative. Negative items have empty `gold_paths`;
-retrieval always returns k candidates, so a negative is judged by whether what
+`gold_paths` are corpus-relative. A negative item is identified by its
+`category: "negative"` label — not by its empty `gold_paths`, which are empty
+by convention; `freeze.py` rejects a set where the two disagree.
+Retrieval always returns k candidates, so a negative is judged by whether what
 ranks on top is in `acceptable_paths`, and true abstention is a downstream
 call built on the reported cosine separation.
 
 ## Design decisions worth stealing
 
-- **Atomic index publish** — data files first, manifest last as the commit
-  marker; a torn write surfaces as a count mismatch at load instead of silent
-  wrong results.
+- **Atomic index publish** — the manifest is the single commit marker: each
+  build writes generation-stamped data files (`embeddings-<gen>.npy`,
+  `chunks-<gen>.json`) that never overwrite the live pair, then one
+  `os.replace` of `manifest.json` publishes them, so a reader sees the whole
+  old snapshot or the whole new one. An earlier version replaced all three
+  files in sequence, which is *not* an atomic snapshot: a same-count publish
+  killed between the embeddings and chunks renames passed every load check
+  while the new vectors sat against stale metadata.
 - **Collapse guard** — once the index holds 50+ documents, the builder refuses
   to run if the corpus count drops >50% (cloud-storage eviction once made
   "publish an empty index with exit 0" a real failure mode).

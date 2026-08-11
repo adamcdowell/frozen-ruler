@@ -242,16 +242,30 @@ def chunk_note(path):
 
 def load_index():
     """Load + validate the index. Raises FileNotFoundError if absent, ValueError
-    if the three artifacts disagree (a torn / partial write), so callers never
-    operate on a mutually-inconsistent index. Equal-count torn reads (a publish
-    landing mid-load can reorder rows without changing counts) are caught by
-    re-reading the manifest after the data files and retrying once."""
+    if the manifest and the data files it NAMES disagree on row count.
+
+    manifest.json is the single commit marker: it names its generation of data
+    files (`emb` / `chunks`), which are written under fresh names and never
+    overwrite the live pair, so a publish is one atomic rename and a reader gets
+    the whole old snapshot or the whole new one. The built_iso re-read below
+    covers the remaining race: a manifest replaced mid-read, whose generation
+    may since have been reclaimed. An index built before generation-stamped
+    publishes still loads via the flat-name fallback — but it predates this
+    guarantee; rebuild it."""
     man_path = os.path.join(INDEX_DIR, "manifest.json")
     for attempt in (1, 2):
         man = json.load(open(man_path, encoding="utf-8"))
-        with open(os.path.join(INDEX_DIR, "embeddings.npy"), "rb") as f:
-            emb = np.load(f, allow_pickle=False)  # never unpickle index data
-        chunks = json.load(open(os.path.join(INDEX_DIR, "chunks.json"), encoding="utf-8"))
+        emb_name = man.get("emb", "embeddings.npy")       # legacy flat layout
+        ch_name = man.get("chunks", "chunks.json")
+        try:
+            with open(os.path.join(INDEX_DIR, emb_name), "rb") as f:
+                emb = np.load(f, allow_pickle=False)  # never unpickle index data
+            chunks = json.load(open(os.path.join(INDEX_DIR, ch_name), encoding="utf-8"))
+        except FileNotFoundError:
+            # our generation was reclaimed by a publish that landed mid-read
+            if attempt == 1:
+                continue
+            raise ValueError("index is being republished; retry the query")
         man2 = json.load(open(man_path, encoding="utf-8"))
         if man.get("built_iso") != man2.get("built_iso"):
             if attempt == 1:

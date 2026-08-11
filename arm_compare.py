@@ -5,10 +5,42 @@ Reports, per metric and per query class: paired sign test (two-sided binomial),
 Wilson 95% CI on the any-hit rate, and the discordant-pair count that drives the
 test — because at small n the honest headline is usually "indistinguishable".
 """
-import json, math, sys
+import json, math, os, sys
 from collections import defaultdict
 
 METRICS = ["recall@1", "recall@3", "recall@5", "recall@10", "mrr@10"]
+CLASS_METRICS = ["recall@1", "recall@5", "recall@10"]
+
+# A run emits 5 headline tests plus 3 per query class. Labelling every one of
+# them "significant" at raw p<0.05 is a multiple-comparisons error, so exactly
+# one metric is confirmatory and every other row is exploratory, reported with a
+# Holm-Bonferroni adjusted p over the whole family emitted by this run.
+# Declare the primary BEFORE you look: FROZEN_PRIMARY_METRIC=recall@10 ...
+PRIMARY = os.environ.get("FROZEN_PRIMARY_METRIC", "recall@5")
+
+
+def holm(pvals):
+    """Holm-Bonferroni step-down adjusted p-values, returned in input order."""
+    m = len(pvals)
+    adj = [1.0] * m
+    running = 0.0
+    for rank, i in enumerate(sorted(range(m), key=lambda j: pvals[j])):
+        running = max(running, min(1.0, pvals[i] * (m - rank)))
+        adj[i] = running
+    return adj
+
+
+def verdict(metric, p, p_adj, primary):
+    """Confirmatory label for the one pre-declared metric; everything else is
+    exploratory and must clear the family-wise adjusted threshold.
+
+    Both labels name the test: the sign test counts how many queries improved vs
+    regressed and discards how much each moved, so it speaks to DIRECTION, not to
+    the mean delta printed beside it.
+    """
+    if metric == primary:
+        return "  <-- SIGNIFICANT (primary; more queries up than down)" if p < 0.05 else ""
+    return "  <-- exploratory, survives Holm (direction)" if p_adj < 0.05 else ""
 
 
 def sign_test(a, b, metric, ids=None):
@@ -41,6 +73,12 @@ def wilson(hits, n, z=1.96):
 def load(path):
     doc = json.load(open(path))
     rows = {r["id"]: r for r in doc["per_item"]}
+    if len(rows) != len(doc["per_item"]):
+        # the warning below only compares collapsed to collapsed, so it cannot see this
+        sys.exit(f"REFUSING: {path} contains duplicate item ids ({len(doc['per_item'])} "
+                 f"rows collapse to {len(rows)}). The aggregate was computed over every "
+                 f"row; the paired tests can only use one row per id, so the two would "
+                 f"describe different samples. Re-freeze the set and rescore.")
     return doc["aggregate"], rows
 
 
@@ -65,13 +103,37 @@ def main():
               f"aggregate columns below were computed on each arm's full set.")
     print(f"paired items: {len(shared)}   {blab} vs {clab}\n")
 
+    byc = defaultdict(list)
+    for i in shared:
+        byc[brows[i].get("category", "?")].append(i)
+    classes = sorted(byc)
+
+    # Pass 1: run the whole family before printing any of it, so the
+    # Holm adjustment knows how many tests this run actually emitted.
+    head = [(m,) + sign_test(brows, crows, m, shared) for m in METRICS]
+    percls = {c: [(m,) + sign_test(brows, crows, m, byc[c]) for m in CLASS_METRICS]
+              for c in classes}
+    pvals = [r[3] for r in head] + [r[3] for c in classes for r in percls[c]]
+    adj = holm(pvals)
+    print(f"FAMILY: {len(pvals)} tests this run ({len(METRICS)} headline + "
+          f"{len(CLASS_METRICS)}x{len(classes)} per class). Primary metric: {PRIMARY}. "
+          f"Uncorrected p is reported for every row; only the primary is confirmatory, "
+          f"the rest are exploratory at Holm-adjusted p.\n")
+
     print("HEADLINE (all scored items)")
-    print(f"  {'metric':10s} {blab:>14s} {clab:>14s}   delta     sign test")
-    for m in METRICS:
-        up, down, p = sign_test(brows, crows, m, shared)
+    print(f"  {'metric':10s} {blab:>14s} {clab:>14s}  mean delta   sign test (direction only)")
+    for k, (m, up, down, p) in enumerate(head):
         d = cagg[m] - bagg[m]
-        star = "  <-- SIGNIFICANT" if p < 0.05 else ""
-        print(f"  {m:10s} {bagg[m]:>14.4f} {cagg[m]:>14.4f} {d:>+8.4f}   {up:3d}up/{down:3d}dn p={p:.4f}{star}")
+        star = verdict(m, p, adj[k], PRIMARY)
+        # The sign test counts how many queries improved vs regressed and
+        # discards how much each moved. It tests DIRECTION, not the mean delta
+        # printed to its left, so the two can disagree when a few large moves
+        # dominate the mean. Flag the disagreement instead of letting a marker
+        # be read as a claim about the average.
+        if p < 0.05 and d * (up - down) < 0:
+            star += "  [!] DIRECTION AND MEAN DISAGREE — a few large moves dominate the mean"
+        print(f"  {m:10s} {bagg[m]:>14.4f} {cagg[m]:>14.4f} {d:>+8.4f}   "
+              f"{up:3d}up/{down:3d}dn p={p:.4f} p_holm={adj[k]:.4f}{star}")
 
     # any-hit rate + Wilson
     print("\nANY-HIT RATE @10 (Wilson 95% CI)")
@@ -84,20 +146,21 @@ def main():
         lo, hi = wilson(hits, len(pos))
         print(f"  {lab:14s}: {hits}/{len(pos)} = {hits/len(pos):.3f}   CI [{lo:.3f}, {hi:.3f}]")
 
-    # per class
-    byc = defaultdict(list)
-    for i in shared:
-        byc[brows[i].get("category", "?")].append(i)
-    print("\nPER CLASS (the question v1 could not answer)")
-    for cls in sorted(byc):
+    # per class — always exploratory: these slices are not pre-declared
+    print("\nPER CLASS (exploratory — hypothesis-generating, not confirmatory)")
+    k = len(head)
+    for cls in classes:
         ids = byc[cls]
         print(f"\n  [{cls}] n={len(ids)}")
-        for m in ("recall@1", "recall@5", "recall@10"):
+        for m, up, down, p in percls[cls]:
             bm = sum(brows[i][m] for i in ids) / len(ids)
             cm = sum(crows[i][m] for i in ids) / len(ids)
-            up, down, p = sign_test(brows, crows, m, ids)
-            star = "  <-- SIGNIFICANT" if p < 0.05 else ""
-            print(f"    {m:10s} {bm:.4f} -> {cm:.4f}  ({cm-bm:+.4f})  {up:2d}up/{down:2d}dn p={p:.3f}{star}")
+            star = "  <-- survives Holm (direction)" if adj[k] < 0.05 else ""
+            if p < 0.05 and (cm - bm) * (up - down) < 0:
+                star += "  [!] direction and mean disagree"
+            print(f"    {m:10s} {bm:.4f} -> {cm:.4f}  ({cm-bm:+.4f})  "
+                  f"{up:2d}up/{down:2d}dn p={p:.3f} p_holm={adj[k]:.3f}{star}")
+            k += 1
 
     # items that flip
     print("\nFLIPS at recall@1 (who actually moved)")

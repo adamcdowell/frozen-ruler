@@ -33,16 +33,21 @@ def ranked_paths(query, mode, rerank, graph, graph_weight, model, chunks, emb,
         qv = model.encode([C.QPREFIX + query], normalize_embeddings=True).astype("float32")[0]
         sims = emb @ qv
         if diag is not None:
-            # calibrated 0-1 cosine — the ONLY abstention signal available. RRF
-            # fused scores are rank-derived (~1/61 for every #1), so they carry no
-            # "is this actually relevant" information; negatives must be judged here.
+            # Raw cosine (both sides L2-normalized, so mathematically [-1,1]) —
+            # UNCALIBRATED: not a probability, only comparable across queries.
+            # It is the only magnitude-bearing score in this pipeline: RRF fused
+            # scores are rank-derived (~1/61 for every #1), so they carry no
+            # "is this actually relevant" information and negatives cannot be
+            # judged on them. This is the dense lane's max, taken deliberately
+            # BEFORE fusion/rerank/graph — abstention is a question about
+            # similarity, not about the fused rank order.
             diag["top_cosine"] = float(sims.max())
         orders.append(list(np.argsort(-sims)))
     if mode in ("hybrid", "sparse"):
         orders.append(list(np.argsort(-S.bm25(query, chunks))))
     fused = S.rrf(orders)
     if rerank:
-        fused = S.rerank_pass(query, chunks, fused)
+        fused = S.rerank_pass(query, chunks, fused, diag=diag)
     scores = S.note_scores(fused, chunks)
     if graph:
         g = S.graph_ppr(chunks, scores)
@@ -90,18 +95,38 @@ def main():
     model = SentenceTransformer(man.get("model", C.MODEL))
     items = [json.loads(l) for l in open(bset) if l.strip()]
 
-    # v2 items carry `category`; negatives (gold_paths == []) are scored by a
+    # v2 items carry `category`, and the LABEL is the authority: an item is a
+    # negative iff category == "negative". Its gold_paths are empty by
+    # convention, but the empty list is not what selects the branch — freeze.py
+    # refuses to freeze a set where the two disagree. Negatives are scored by a
     # different rule and never enter the recall macro-average.
     is_v2 = any("category" in it for it in items)
     mega = {p for p, _ in Counter(c["path"] for c in chunks).most_common(MEGA_N)}
 
     per_item, stale, negatives = [], [], []
+    # A degraded lane must be counted, not just warned about on stderr. The
+    # artifact is the durable record (arm_compare.py reads it months later);
+    # a stderr line is gone the moment the terminal scrolls.
+    rerank_attempts, rerank_fallbacks, rerank_errors = 0, 0, []
+
+    def _note_rerank(diag):
+        nonlocal rerank_attempts, rerank_fallbacks
+        if "rerank_ran" not in diag:
+            return
+        rerank_attempts += 1
+        if diag["rerank_ran"] is False:
+            rerank_fallbacks += 1
+            err = diag.get("rerank_error")
+            if err and err not in rerank_errors:
+                rerank_errors.append(err)
+
     for it in items:
         cat = it.get("category", "unclassified")
         if is_v2 and cat == "negative":
             diag = {}
             ranked = ranked_paths(it["query"], a.mode, a.rerank, a.graph, a.graph_weight,
                                   model, chunks, emb, diag=diag)
+            _note_rerank(diag)
             ok = set(it.get("acceptable_paths", []))
             negatives.append({
                 "id": it["id"], "query": it["query"], "top_cosine": diag.get("top_cosine"),
@@ -114,12 +139,16 @@ def main():
                 "top5": ranked[:5],
             })
             continue
-        gold = [p for p in it["gold_paths"] if p in index_paths]
+        # order-preserving dedupe: the hit count below is a set intersection, so a
+        # repeated gold path would inflate only the denominator and cap recall
+        # below 1.0 on a perfect retrieval (which MRR and the miss list would not catch)
+        gold = list(dict.fromkeys(p for p in it["gold_paths"] if p in index_paths))
         if not gold:
             stale.append(it["id"])
             continue
         diag = {}
         ranked = ranked_paths(it["query"], a.mode, a.rerank, a.graph, a.graph_weight, model, chunks, emb, diag=diag)
+        _note_rerank(diag)
         row = {"id": it["id"], "source": it.get("source", ""), "category": cat,
                "query": it["query"], "n_gold": len(gold),
                "top_cosine": diag.get("top_cosine"),
@@ -139,7 +168,20 @@ def main():
         row["mrr@10"] = round(rr, 4)
         per_item.append(row)
 
-    agg = {"mode": a.mode, "rerank": a.rerank, "graph": a.graph, "graph_weight": a.graph_weight,
+    # FAIL CLOSED ON A DEGRADED LANE: same principle as the sha256 pin check.
+    # Publishing RRF numbers under a rerank=true stamp would poison every future
+    # --compare exactly the way un-stamped index drift used to.
+    if a.rerank and rerank_fallbacks:
+        sys.exit(f"FATAL: --rerank was requested but the cross-encoder failed on "
+                 f"{rerank_fallbacks}/{rerank_attempts} items "
+                 f"({'; '.join(rerank_errors) or 'unknown error'}). These are un-reranked RRF "
+                 f"baseline numbers; writing them stamped rerank=true would make every stored "
+                 f"comparison against them invalid. Fix the reranker and re-run.")
+
+    agg = {"mode": a.mode, "rerank": a.rerank,
+           # explicit, so an artifact can never merely IMPLY the lane ran
+           "rerank_verified": bool(a.rerank) and rerank_attempts > 0 and rerank_fallbacks == 0,
+           "graph": a.graph, "graph_weight": a.graph_weight,
            "items_scored": len(per_item), "stale": stale,
            # index provenance — without this a --compare silently attributes CORPUS
            # DRIFT to the change under test (learned live: a metadata writeback
@@ -184,10 +226,16 @@ def main():
                 "n": len(negatives),
                 "top1_acceptable_rate": round(sum(n["top1_acceptable"] for n in negatives) / len(negatives), 4),
                 "any5_acceptable_rate": round(sum(n["any5_acceptable"] for n in negatives) / len(negatives), 4),
-                "neg_cosine_median": round(neg_cos[len(neg_cos) // 2], 4) if neg_cos else None,
-                "pos_cosine_median": round(pos_cos[len(pos_cos) // 2], 4) if pos_cos else None,
-                "neg_cosine_p90": round(neg_cos[int(len(neg_cos) * 0.9)], 4) if neg_cos else None,
-                "pos_cosine_p10": round(pos_cos[int(len(pos_cos) * 0.1)], 4) if pos_cos else None,
+                # numpy's linear-interpolation estimator, named so these are
+                # reproducible. The previous code used sorted[n//2] and
+                # sorted[int(n*0.9)], which returns the UPPER-middle value at even
+                # n and collapses p10/p90 to min/max for any n <= 10 — exactly the
+                # small-n regime this harness exists for. n is printed beside these;
+                # below ~20 read them as order statistics, not percentiles.
+                "neg_cosine_median": round(float(np.median(neg_cos)), 4) if neg_cos else None,
+                "pos_cosine_median": round(float(np.median(pos_cos)), 4) if pos_cos else None,
+                "neg_cosine_p90": round(float(np.quantile(neg_cos, 0.9)), 4) if neg_cos else None,
+                "pos_cosine_p10": round(float(np.quantile(pos_cos, 0.1)), 4) if pos_cos else None,
                 "separation_auc": round(auc, 4) if auc is not None else None,
             }
 

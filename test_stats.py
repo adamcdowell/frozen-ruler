@@ -42,6 +42,11 @@ approx(p, expect)
 up, down, p = ac.sign_test(rows([0.5]), rows([0.5 + 1e-12]), "recall@1")
 assert (up, down) == (0, 0)
 
+# direction and mean can disagree: the sign test discards magnitude
+up, down, p = ac.sign_test(rows([0.1] * 20 + [1.0]), rows([0.1111] * 20 + [0.0]), "recall@1")
+assert (up, down) == (20, 1) and p < 0.05
+assert (sum([0.1111] * 20 + [0.0]) - sum([0.1] * 20 + [1.0])) < 0  # mean moved DOWN
+
 # --- Wilson 95% interval ---
 # n=0 -> (0, 0) guard
 assert ac.wilson(0, 0) == (0.0, 0.0)

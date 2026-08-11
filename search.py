@@ -172,18 +172,26 @@ def fuse_note_lanes(base_scores, graph_scores, graph_weight=1.0, k=60):
 
 
 
-def rerank_pass(query, chunks, fused, top_n=24):
+def rerank_pass(query, chunks, fused, top_n=24, diag=None):
     # Cross-encoder second pass over the top-N fused chunks.
-    # Replaces RRF scores for the candidate set;
-    # degrades gracefully — any failure returns the RRF order unchanged.
+    # Replaces RRF scores for the candidate set.
+    # INTERACTIVE search degrades gracefully (no diag passed): a missing model
+    # should not stop you searching. MEASUREMENT must not degrade silently —
+    # score.py passes `diag` and refuses to publish an artifact stamped
+    # rerank=true whose numbers are actually the un-reranked RRF baseline.
     try:
         from sentence_transformers import CrossEncoder
         cand = sorted(fused.items(), key=lambda x: -x[1])[:top_n]
         model = CrossEncoder(RERANKER, max_length=512)
         pairs = [(query, chunks[i].get("ctext", chunks[i]["text"])[:2000]) for i, _ in cand]
         scores = model.predict(pairs)
+        if diag is not None:
+            diag["rerank_ran"] = True
         return {i: float(s) for (i, _), s in zip(cand, scores)}
     except Exception as e:
+        if diag is not None:
+            diag["rerank_ran"] = False
+            diag["rerank_error"] = f"{type(e).__name__}: {e}"
         print(f"rerank unavailable ({e}); falling back to RRF order", file=sys.stderr)
         return fused
 
