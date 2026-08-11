@@ -1,0 +1,26 @@
+# Dependency-honest by design: this lane installs NOTHING.
+# test_stats.py imports only stdlib `math` + arm_compare.py, and arm_compare.py imports only
+# stdlib (json, math, sys, collections). sentence-transformers/numpy are runtime deps of the
+# indexing/scoring scripts, not of the statistics tests -- installing them here would be theater.
+#
+# Do NOT switch this step to pytest: test_stats.py uses flat asserts and defines no test_
+# functions, so pytest collects 0 tests and exits 5, failing CI for the wrong reason.
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']   # floor matches pyproject requires-python (numpy 2.4.6 needs >=3.11)
+        platform: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Stats tests (stdlib-only, nothing installed)
+        run: python test_stats.py
