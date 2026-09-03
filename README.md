@@ -305,6 +305,47 @@ only the standard library, so the statistics are verifiable without touching the
 ~2 GB of torch that the indexing side needs. `sentence-transformers` and `numpy`
 are dependencies of `build_index.py` / `score.py`, not of the maths.
 
+## Known Limitations
+
+Every one of these is true of the code in this repo as of the current commit.
+They are listed because a harness that reports what it does not check is worth
+more than one that implies it checks everything.
+
+- **The frozen set is the questions, not the corpus.** `freeze.py` hashes
+  `benchmark.jsonl`; `score.py` fatal-exits when that hash does not match. The
+  corpus and the index are *recorded* in the results artifact — model, chunker,
+  chunk count, build time — but they are not hash-verified. You can run the same
+  frozen questions against a silently changed corpus and nothing here will stop
+  you. The ruler cannot move. The thing being measured still can.
+
+- **The shipped example is n = 11.** Eleven items across five classes: derived
+  3, synonym 2, cross-page 2, partial-recall 2, negative 2. The per-class table
+  demonstrates the *structure* of per-class reporting; it does not measure
+  anything. A Wilson interval on n = 2 spans most of the range, and
+  `arm_compare.py` will usually — correctly — report the two arms as
+  indistinguishable. Treat the example numbers as a smoke test, not a result.
+
+- **It scores retrieval, never answers.** Every metric is recall@k, f1@k or
+  MRR@10. Nothing here checks whether a correct answer was produced from what
+  was retrieved. A system that retrieves all the right documents and then
+  answers wrong scores perfectly on this harness.
+
+- **Hits are path-level, not passage-level.** A hit means the right note
+  appeared in the top k. It does not mean the retrieved chunk contained the
+  relevant passage. A long note that is mostly irrelevant counts exactly the
+  same as a precise one.
+
+- **The sign test discards magnitude.** `arm_compare.py` counts queries that
+  improved against queries that regressed and ignores by how much. A change that
+  helps six queries slightly and hurts five badly registers as an improvement.
+  Read the per-item deltas, not only the test result.
+
+- **One corpus, one author.** The design decisions come from real incidents on a
+  knowledge base I run daily, but the shipped corpus is a synthetic espresso
+  wiki and every query class was chosen by me, against my own retrieval
+  failures. The taxonomy is evidence about my data. It is not evidence that
+  these are the classes that matter for yours.
+
 ## What this is not
 
 Not a library, not a package, no API stability promise. It's a reference
